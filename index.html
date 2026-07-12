@@ -149,6 +149,36 @@ section{padding:44px 0 8px}
 .langbar .bar .goal{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--amber)}
 .langbar .t{display:flex;justify-content:space-between;font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-top:5px}
 
+/* ── V3 MOTION LAYER ─────────────────────────────── */
+/* scroll progress bar */
+#scrollbar{position:fixed;top:0;left:0;height:3px;width:0;z-index:100;
+  background:linear-gradient(90deg,var(--prussian),var(--sky));pointer-events:none}
+
+/* hero entrance choreography */
+@keyframes rise{from{opacity:0;transform:translateY(26px)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:no-preference){
+  .kicker,.hero-main h1,.thesis,.hero-cta,.avail{
+    animation:rise .7s cubic-bezier(.22,1.1,.36,1) both}
+  .kicker{animation-delay:.05s}
+  .hero-main h1{animation-delay:.15s}
+  .thesis{animation-delay:.28s}
+  .hero-cta{animation-delay:.40s}
+  .avail{animation-delay:.52s}
+  .ticker{animation:rise .8s .6s cubic-bezier(.22,1.1,.36,1) both}
+}
+
+/* staggered section reveals with spring overshoot */
+.reveal{opacity:0;transform:translateY(24px)}
+.reveal.in{opacity:1;transform:none;
+  transition:opacity .55s ease,transform .7s cubic-bezier(.22,1.25,.36,1)}
+@media(prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none}}
+
+/* scrollspy active state */
+.bar-in a.active{color:var(--prussian);border-bottom-color:var(--prussian);font-weight:600}
+
+/* magnetic CTAs move via JS transform; keep their own smoothing */
+.hero-cta a{will-change:transform}
+
 footer{margin-top:48px;background:var(--navy-0);color:#9FB6C8}
 .foot-in{display:flex;justify-content:space-between;gap:14px;padding:28px 22px;flex-wrap:wrap;
   font-family:var(--mono);font-size:12.5px;max-width:1100px;margin:0 auto}
@@ -156,6 +186,7 @@ footer a{color:var(--sky)}
 </style>
 </head>
 <body>
+<div id="scrollbar" aria-hidden="true"></div>
 
 <!-- HERO -->
 <div class="hero">
@@ -458,28 +489,84 @@ STAGES.forEach(s=>{
   funEl.appendChild(d);
 });
 
-/* scroll-in animations */
+/* ── V3 MOTION ENGINE ── */
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* spring count-up: damped oscillation, slight overshoot then settle */
 function countUp(el){
   const target = parseFloat(el.dataset.count), dec = +el.dataset.dec;
   if(reduced){ el.textContent = target.toFixed(dec); return; }
-  const t0 = performance.now(), dur = 900;
+  const t0 = performance.now(), dur = 1200;
   (function tick(t){
-    const k = Math.min((t-t0)/dur,1);
-    el.textContent = (target*(1-Math.pow(1-k,3))).toFixed(dec);
-    if(k<1) requestAnimationFrame(tick);
+    const x = Math.min((t-t0)/dur,1);
+    const k = 1 - Math.exp(-5.2*x) * Math.cos(7*x);   // spring: overshoots ~4%, settles
+    el.textContent = (target*k).toFixed(dec);
+    if(x<1) requestAnimationFrame(tick);
+    else el.textContent = target.toFixed(dec);
   })(t0);
 }
+
+/* staggered reveals: cards inside each section rise in sequence */
+const CARD_SEL = '.kpi,.panel,.repo,.job,.claim';
+document.querySelectorAll('section').forEach(sec=>{
+  sec.querySelectorAll(CARD_SEL).forEach((c,i)=>{
+    c.classList.add('reveal');
+    c.style.transitionDelay = Math.min(i*70,420)+'ms';
+  });
+});
 const io = new IntersectionObserver(entries=>{
   entries.forEach(e=>{
     if(!e.isIntersecting) return;
+    e.target.querySelectorAll('.reveal').forEach(c=>c.classList.add('in'));
     e.target.querySelectorAll('[data-w]').forEach(b=>{ b.style.width = b.dataset.w+'%'; });
     e.target.querySelectorAll('[data-count]').forEach(countUp);
     io.unobserve(e.target);
   });
-},{threshold:.2});
+},{threshold:.18});
 document.querySelectorAll('section').forEach(s=>io.observe(s));
-if(reduced){document.querySelectorAll('[data-w]').forEach(b=>b.style.width=b.dataset.w+'%');}
+if(reduced){
+  document.querySelectorAll('[data-w]').forEach(b=>b.style.width=b.dataset.w+'%');
+  document.querySelectorAll('.reveal').forEach(c=>c.classList.add('in'));
+}
+
+/* scrollspy: highlight the section currently in view */
+const navLinks = [...document.querySelectorAll('.bar-in a')];
+const spy = new IntersectionObserver(entries=>{
+  entries.forEach(e=>{
+    if(!e.isIntersecting) return;
+    navLinks.forEach(a=>a.classList.toggle('active', a.getAttribute('href')==='#'+e.target.id));
+  });
+},{rootMargin:'-35% 0px -55% 0px'});
+document.querySelectorAll('main section[id]').forEach(s=>spy.observe(s));
+
+/* scroll progress bar */
+const sb = document.getElementById('scrollbar');
+let sbTick = false;
+addEventListener('scroll',()=>{
+  if(sbTick) return; sbTick = true;
+  requestAnimationFrame(()=>{
+    const h = document.documentElement;
+    sb.style.width = (h.scrollTop/(h.scrollHeight-h.clientHeight)*100)+'%';
+    sbTick = false;
+  });
+},{passive:true});
+
+/* magnetic hero CTAs: pull toward the cursor, spring back on leave */
+if(!reduced && matchMedia('(pointer:fine)').matches){
+  document.querySelectorAll('.hero-cta a').forEach(btn=>{
+    btn.addEventListener('mousemove',ev=>{
+      const r = btn.getBoundingClientRect();
+      const dx = (ev.clientX - r.left - r.width/2)/r.width;
+      const dy = (ev.clientY - r.top - r.height/2)/r.height;
+      btn.style.transform = `translate(${dx*8}px,${dy*6}px)`;
+    });
+    btn.addEventListener('mouseleave',()=>{
+      btn.style.transition = 'transform .5s cubic-bezier(.22,1.6,.36,1)';
+      btn.style.transform = '';
+      setTimeout(()=>btn.style.transition='',500);
+    });
+  });
+}
 </script>
 </body>
 </html>
